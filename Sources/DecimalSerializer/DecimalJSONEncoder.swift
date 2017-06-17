@@ -51,23 +51,11 @@ open class DecimalJSONDecoder {
         case custom((_ decoder: Decoder) throws -> Data)
     }
 
-    /// The strategy to use for non-JSON-conforming floating-point values (IEEE 754 infinity and NaN).
-    public enum NonConformingFloatDecodingStrategy {
-        /// Throw upon encountering non-conforming values. This is the default strategy.
-        case `throw`
-
-        /// Decode the values from the given representation strings.
-        case convertFromString(positiveInfinity: String, negativeInfinity: String, nan: String)
-    }
-
     /// The strategy to use in decoding dates. Defaults to `.deferredToDate`.
     open var dateDecodingStrategy: DateDecodingStrategy = .deferredToDate
 
     /// The strategy to use in decoding binary data. Defaults to `.base64Decode`.
     open var dataDecodingStrategy: DataDecodingStrategy = .base64Decode
-
-    /// The strategy to use in decoding non-conforming numbers. Defaults to `.throw`.
-    open var nonConformingFloatDecodingStrategy: NonConformingFloatDecodingStrategy = .throw
 
     /// Contextual user-provided information for use during decoding.
     open var userInfo: [CodingUserInfoKey : Any] = [:]
@@ -76,7 +64,6 @@ open class DecimalJSONDecoder {
     fileprivate struct _Options {
         let dateDecodingStrategy: DateDecodingStrategy
         let dataDecodingStrategy: DataDecodingStrategy
-        let nonConformingFloatDecodingStrategy: NonConformingFloatDecodingStrategy
         let userInfo: [CodingUserInfoKey : Any]
     }
 
@@ -84,7 +71,6 @@ open class DecimalJSONDecoder {
     fileprivate var options: _Options {
         return _Options(dateDecodingStrategy: dateDecodingStrategy,
                         dataDecodingStrategy: dataDecodingStrategy,
-                        nonConformingFloatDecodingStrategy: nonConformingFloatDecodingStrategy,
                         userInfo: userInfo)
     }
 
@@ -193,7 +179,7 @@ fileprivate struct _DecimalJSONDecodingStorage {
     // MARK: Properties
 
     /// The container stack.
-    /// Elements may be any one of the JSON types (NSNull, NSNumber, String, Array, [String : Any]).
+    /// Elements may be any one of the JSON types (NSNull, Bool, Decimal, String, Array, [String : Any]).
     private(set) var containers: [Any] = []
 
     // MARK: - Initialization

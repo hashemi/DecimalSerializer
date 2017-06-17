@@ -25,10 +25,9 @@ extension DecimalJSONSerialization {
    
    An object that may be converted to JSON must have the following properties:
     - Top level object is a `Swift.Array` or `Swift.Dictionary`
-    - All objects are `Swift.String`, `Foundation.NSNumber`, `Swift.Array`, `Swift.Dictionary`,
+    - All objects are `Swift.String`, `Swift.Bool`, `Foundation.Decimal`, `Swift.Array`, `Swift.Dictionary`,
       or `Foundation.NSNull`
     - All dictionary keys are `Swift.String`s
-    - `NSNumber`s are not NaN or infinity
 */
 
 open class DecimalJSONSerialization : NSObject {
@@ -40,7 +39,6 @@ open class DecimalJSONSerialization : NSObject {
        - returns: `true` if `obj` can be converted to JSON, otherwise `false`.
      */
     open class func isValidJSONObject(_ obj: Any) -> Bool {
-        // TODO: - revisit this once bridging story gets fully figured out
         func isValidJSONObjectInternal(_ obj: Any) -> Bool {
             // object is Swift.String, NSNull, Bool, or Decimal
             if obj is String || obj is NSNull || obj is Bool || obj is Decimal {
