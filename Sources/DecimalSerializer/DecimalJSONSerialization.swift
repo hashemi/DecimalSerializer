@@ -7,15 +7,9 @@
 // See http://swift.org/CONTRIBUTORS.txt for the list of Swift project authors
 //
 
-import CoreFoundation
+import Foundation
 
-#if os(OSX) || os(iOS)
-    import Darwin
-#elseif os(Linux) || CYGWIN
-    import Glibc
-#endif
-
-extension JSONSerialization {
+extension DecimalJSONSerialization {
     public struct ReadingOptions : OptionSet {
         public let rawValue : UInt
         public init(rawValue: UInt) { self.rawValue = rawValue }
@@ -23,13 +17,6 @@ extension JSONSerialization {
         public static let mutableContainers = ReadingOptions(rawValue: 1 << 0)
         public static let mutableLeaves = ReadingOptions(rawValue: 1 << 1)
         public static let allowFragments = ReadingOptions(rawValue: 1 << 2)
-    }
-
-    public struct WritingOptions : OptionSet {
-        public let rawValue : UInt
-        public init(rawValue: UInt) { self.rawValue = rawValue }
-        
-        public static let prettyPrinted = WritingOptions(rawValue: 1 << 0)
     }
 }
 
@@ -44,7 +31,7 @@ extension JSONSerialization {
     - `NSNumber`s are not NaN or infinity
 */
 
-open class JSONSerialization : NSObject {
+open class DecimalJSONSerialization : NSObject {
     
     /* Determines whether the given object can be converted to JSON.
        Other rules may apply. Calling this method or attempting a conversion are the definitive ways
@@ -55,18 +42,9 @@ open class JSONSerialization : NSObject {
     open class func isValidJSONObject(_ obj: Any) -> Bool {
         // TODO: - revisit this once bridging story gets fully figured out
         func isValidJSONObjectInternal(_ obj: Any) -> Bool {
-            // object is Swift.String, NSNull, Int, Bool, or UInt
-            if obj is String || obj is NSNull || obj is Int || obj is Bool || obj is UInt {
+            // object is Swift.String, NSNull, Bool, or Decimal
+            if obj is String || obj is NSNull || obj is Bool || obj is Decimal {
                 return true
-            }
-
-            // object is a Double and is not NaN or infinity
-            if let number = obj as? Double  {
-                return number.isFinite
-            }
-            // object is a Float and is not NaN or infinity
-            if let number = obj as? Float  {
-                return number.isFinite
             }
 
             // object is Swift.Array
@@ -89,13 +67,6 @@ open class JSONSerialization : NSObject {
                 return true
             }
 
-            // object is NSNumber and is not NaN or infinity
-            // For better performance, this (most expensive) test should be last.
-            if let number = _SwiftValue.store(obj) as? NSNumber {
-                let invalid = number.doubleValue.isInfinite || number.doubleValue.isNaN
-                return !invalid
-            }
-
             // invalid object
             return false
         }
@@ -106,52 +77,6 @@ open class JSONSerialization : NSObject {
         }
 
         return isValidJSONObjectInternal(obj)
-    }
-    
-    /* Generate JSON data from a Foundation object. If the object will not produce valid JSON then an exception will be thrown. Setting the NSJSONWritingPrettyPrinted option will generate JSON with whitespace designed to make the output more readable. If that option is not set, the most compact possible JSON will be generated. If an error occurs, the error parameter will be set and the return value will be nil. The resulting data is a encoded in UTF-8.
-     */
-    internal class func _data(withJSONObject value: Any, options opt: WritingOptions, stream: Bool) throws -> Data {
-        var jsonStr = String()
-        
-        var writer = JSONWriter(
-            pretty: opt.contains(.prettyPrinted),
-            writer: { (str: String?) in
-                if let str = str {
-                    jsonStr.append(str)
-                }
-            }
-        )
-        
-        if let container = value as? NSArray {
-            try writer.serializeJSON(container._bridgeToSwift())
-        } else if let container = value as? NSDictionary {
-            try writer.serializeJSON(container._bridgeToSwift())
-        } else if let container = value as? Array<Any> {
-            try writer.serializeJSON(container)
-        } else if let container = value as? Dictionary<AnyHashable, Any> {
-            try writer.serializeJSON(container)
-        } else {
-            if stream {
-                throw NSError(domain: NSCocoaErrorDomain, code: CocoaError.propertyListReadCorrupt.rawValue, userInfo: [
-                    "NSDebugDescription" : "Top-level object was not NSArray or NSDictionary"
-                    ])
-            } else {
-                fatalError("Top-level object was not NSArray or NSDictionary") // This is a fatal error in objective-c too (it is an NSInvalidArgumentException)
-            }
-        }
-        
-        let count = jsonStr.lengthOfBytes(using: .utf8)
-        let bufferLength = count+1 // Allow space for null terminator
-        var utf8: [CChar] = Array<CChar>(repeating: 0, count: bufferLength)
-        if !jsonStr.getCString(&utf8, maxLength: bufferLength, encoding: .utf8) {
-            fatalError("Failed to generate a CString from a String")
-        }
-        let rawBytes = UnsafeRawPointer(UnsafePointer(utf8))
-        let result = Data(bytes: rawBytes.bindMemory(to: UInt8.self, capacity: count), count: count)
-        return result
-    }
-    open class func data(withJSONObject value: Any, options opt: WritingOptions = []) throws -> Data {
-        return try _data(withJSONObject: value, options: opt, stream: false)
     }
     
     /* Create a Foundation object from JSON data. Set the NSJSONReadingAllowFragments option if the parser should allow top-level objects that are not an NSArray or NSDictionary. Setting the NSJSONReadingMutableContainers option will make the parser generate mutable NSArrays and NSDictionaries. Setting the NSJSONReadingMutableLeaves option will make the parser generate mutable NSString objects. If an error occurs during the parse, then the error parameter will be set and the result will be nil.
@@ -170,8 +95,8 @@ open class JSONSerialization : NSObject {
                 buffer = UnsafeBufferPointer(start: bytes, count: data.count)
             }
             
-            let source = JSONReader.UnicodeSource(buffer: buffer, encoding: encoding)
-            let reader = JSONReader(source: source)
+            let source = DecimalJSONReader.UnicodeSource(buffer: buffer, encoding: encoding)
+            let reader = DecimalJSONReader(source: source)
             if let (object, _) = try reader.parseObject(0) {
                 return object
             }
@@ -186,18 +111,6 @@ open class JSONSerialization : NSObject {
             ])
         }
         
-    }
-    
-    /* Write JSON data into a stream. The stream should be opened and configured. The return value is the number of bytes written to the stream, or 0 on error. All other behavior of this method is the same as the dataWithJSONObject:options:error: method.
-     */
-    open class func writeJSONObject(_ obj: Any, toStream stream: OutputStream, options opt: WritingOptions) throws -> Int {
-        let jsonData = try _data(withJSONObject: obj, options: opt, stream: true)
-        let count = jsonData.count
-        return jsonData.withUnsafeBytes { (bytePtr: UnsafePointer<UInt8>) -> Int in
-            let res: Int = stream.write(bytePtr, maxLength: count)
-            /// TODO: If the result here is negative the error should be obtained from the stream to propigate as a throw
-            return res
-        }
     }
     
     /* Create a JSON object from JSON data stream. The stream should be opened and configured. All other behavior of this method is the same as the JSONObjectWithData:options:error: method.
@@ -223,7 +136,7 @@ open class JSONSerialization : NSObject {
 
 //MARK: - Encoding Detection
 
-internal extension JSONSerialization {
+internal extension DecimalJSONSerialization {
     
     /// Detect the encoding format of the NSData contents
     class func detectEncoding(_ bytes: UnsafePointer<UInt8>, _ length: Int) -> String.Encoding {
@@ -281,281 +194,8 @@ internal extension JSONSerialization {
     }
 }
 
-//MARK: - JSONSerializer
-private struct JSONWriter {
-    
-    private let maxUIntLength = String(describing: UInt.max).characters.count
-    private let maxIntLength = String(describing: Int.max).characters.count
-    var indent = 0
-    let pretty: Bool
-    let writer: (String?) -> Void
-    
-    private lazy var _numberformatter: CFNumberFormatter = {
-        let formatter: CFNumberFormatter
-        formatter = CFNumberFormatterCreate(nil, CFLocaleCopyCurrent(), kCFNumberFormatterNoStyle)
-        CFNumberFormatterSetProperty(formatter, kCFNumberFormatterMaxFractionDigits, NSNumber(value: 15))
-        CFNumberFormatterSetFormat(formatter, "0.###############"._cfObject)
-        return formatter
-    }()
-
-    init(pretty: Bool = false, writer: @escaping (String?) -> Void) {
-        self.pretty = pretty
-        self.writer = writer
-    }
-    
-    mutating func serializeJSON(_ obj: Any) throws {
-
-        // For better performance, the most expensive conditions to evaluate should be last.
-        switch (obj) {
-        case let str as String:
-            try serializeString(str)
-        case let boolValue as Bool:
-            serializeBool(boolValue)
-        case let num as Int:
-            try serializeInt(value: num)
-        case let num as UInt:
-            try serializeUInt(value: num)
-        case let array as Array<Any>:
-            try serializeArray(array)
-        case let dict as Dictionary<AnyHashable, Any>:
-            try serializeDictionary(dict)
-        case let null as NSNull:
-            try serializeNull(null)
-        case _ where _SwiftValue.store(obj) is NSNumber:
-            try serializeNumber(_SwiftValue.store(obj) as! NSNumber)
-        default:
-            throw NSError(domain: NSCocoaErrorDomain, code: CocoaError.propertyListReadCorrupt.rawValue, userInfo: ["NSDebugDescription" : "Invalid object cannot be serialized"])
-        }
-    }
-
-    private func serializeUInt(value: UInt) throws {
-        if value == 0 {
-            writer("0")
-            return
-        }
-        var array: [UInt] = []
-        var stringResult = ""
-        //Maximum length of an UInt
-        array.reserveCapacity(maxUIntLength)
-        stringResult.reserveCapacity(maxUIntLength)
-        var number = value
-        
-        while number != 0 {
-            array.append(number % 10)
-            number /= 10
-        }
-        
-        /*
-         Step backwards through the array and append the values to the string. This way the values are appended in the correct order.
-         */
-        var counter = array.count
-        while counter > 0 {
-            counter -= 1
-            let digit: UInt = array[counter]
-            switch digit {
-            case 0: stringResult.append("0")
-            case 1: stringResult.append("1")
-            case 2: stringResult.append("2")
-            case 3: stringResult.append("3")
-            case 4: stringResult.append("4")
-            case 5: stringResult.append("5")
-            case 6: stringResult.append("6")
-            case 7: stringResult.append("7")
-            case 8: stringResult.append("8")
-            case 9: stringResult.append("9")
-            default: fatalError()
-            }
-        }
-        
-        writer(stringResult)
-    }
-    
-    private func serializeInt(value: Int) throws {
-        if value == 0 {
-            writer("0")
-            return
-        }
-        var array: [Int] = []
-        var stringResult = ""
-        array.reserveCapacity(maxIntLength)
-        //Account for a negative sign
-        stringResult.reserveCapacity(maxIntLength + 1)
-        var number = value
-        
-        while number != 0 {
-            array.append(number % 10)
-            number /= 10
-        }
-        //If negative add minus sign before adding any values
-        if value < 0 {
-            stringResult.append("-")
-        }
-        /*
-         Step backwards through the array and append the values to the string. This way the values are appended in the correct order.
-         */
-        var counter = array.count
-        while counter > 0 {
-            counter -= 1
-            let digit = array[counter]
-            switch digit {
-            case 0: stringResult.append("0")
-            case 1, -1: stringResult.append("1")
-            case 2, -2: stringResult.append("2")
-            case 3, -3: stringResult.append("3")
-            case 4, -4: stringResult.append("4")
-            case 5, -5: stringResult.append("5")
-            case 6, -6: stringResult.append("6")
-            case 7, -7: stringResult.append("7")
-            case 8, -8: stringResult.append("8")
-            case 9, -9: stringResult.append("9")
-            default: fatalError()
-            }
-        }
-        writer(stringResult)
-    }
-    
-    func serializeString(_ str: String) throws {
-        writer("\"")
-        for scalar in str.unicodeScalars {
-            switch scalar {
-                case "\"":
-                    writer("\\\"") // U+0022 quotation mark
-                case "\\":
-                    writer("\\\\") // U+005C reverse solidus
-                // U+002F solidus not escaped
-                case "\u{8}":
-                    writer("\\b") // U+0008 backspace
-                case "\u{c}":
-                    writer("\\f") // U+000C form feed
-                case "\n":
-                    writer("\\n") // U+000A line feed
-                case "\r":
-                    writer("\\r") // U+000D carriage return
-                case "\t":
-                    writer("\\t") // U+0009 tab
-                case "\u{0}"..."\u{f}":
-                    writer("\\u000\(String(scalar.value, radix: 16))") // U+0000 to U+000F
-                case "\u{10}"..."\u{1f}":
-                    writer("\\u00\(String(scalar.value, radix: 16))") // U+0010 to U+001F
-                default:
-                    writer(String(scalar))
-            }
-        }
-        writer("\"")
-    }
-
-    func serializeBool(_ bool: Bool) {
-        switch bool {
-        case true:
-            writer("true")
-        case false:
-            writer("false")
-        }
-    }
-
-    mutating func serializeNumber(_ num: NSNumber) throws {
-        if num.doubleValue.isInfinite || num.doubleValue.isNaN {
-            throw NSError(domain: NSCocoaErrorDomain, code: CocoaError.propertyListReadCorrupt.rawValue, userInfo: ["NSDebugDescription" : "Number cannot be infinity or NaN"])
-        }
-        
-        switch num._objCType {
-        case .Bool:
-            serializeBool(num.boolValue)
-        default:
-            writer(_serializationString(for: num))
-        }
-    }
-
-    mutating func serializeArray(_ array: [Any]) throws {
-        writer("[")
-        if pretty {
-            writer("\n")
-            incAndWriteIndent()
-        }
-        
-        var first = true
-        for elem in array {
-            if first {
-                first = false
-            } else if pretty {
-                writer(",\n")
-                writeIndent()
-            } else {
-                writer(",")
-            }
-            try serializeJSON(elem)
-        }
-        if pretty {
-            writer("\n")
-            decAndWriteIndent()
-        }
-        writer("]")
-    }
-
-    mutating func serializeDictionary(_ dict: Dictionary<AnyHashable, Any>) throws {
-        writer("{")
-        if pretty {
-            writer("\n")
-            incAndWriteIndent()
-        }
-        
-        var first = true
-        
-        for (key, value) in dict {
-            if first {
-                first = false
-            } else if pretty {
-                writer(",\n")
-                writeIndent()
-            } else {
-                writer(",")
-            }
-            
-            if key is String {
-                try serializeString(key as! String)
-            } else {
-                throw NSError(domain: NSCocoaErrorDomain, code: CocoaError.propertyListReadCorrupt.rawValue, userInfo: ["NSDebugDescription" : "NSDictionary key must be NSString"])
-            }
-            pretty ? writer(": ") : writer(":")
-            try serializeJSON(value)
-        }
-        if pretty {
-            writer("\n")
-            decAndWriteIndent()
-        }
-        writer("}")
-    }
-
-    func serializeNull(_ null: NSNull) throws {
-        writer("null")
-    }
-    
-    let indentAmount = 2
-    
-    mutating func incAndWriteIndent() {
-        indent += indentAmount
-        writeIndent()
-    }
-    
-    mutating func decAndWriteIndent() {
-        indent -= indentAmount
-        writeIndent()
-    }
-    
-    func writeIndent() {
-        for _ in 0..<indent {
-            writer(" ")
-        }
-    }
-    
-    //[SR-2151] https://bugs.swift.org/browse/SR-2151
-    private mutating func _serializationString(for number: NSNumber) -> String {
-        return CFNumberFormatterCreateStringWithNumber(nil, _numberformatter, number._cfObject)._swiftObject
-    }
-}
-
 //MARK: - JSONDeserializer
-private struct JSONReader {
+private struct DecimalJSONReader {
 
     static let whitespaceASCII: [UInt8] = [
         0x09, // Horizontal tab
@@ -648,7 +288,7 @@ private struct JSONReader {
 
     func consumeWhitespace(_ input: Index) -> Index? {
         var index = input
-        while let (char, nextIndex) = source.takeASCII(index), JSONReader.whitespaceASCII.contains(char) {
+        while let (char, nextIndex) = source.takeASCII(index), DecimalJSONReader.whitespaceASCII.contains(char) {
             index = nextIndex
         }
         return index
@@ -796,59 +436,20 @@ private struct JSONReader {
         0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, // 0...9
         0x2E, 0x2D, 0x2B, 0x45, 0x65, // . - + E e
     ]
-    func parseNumber(_ input: Index) throws -> (Any, Index)? {
-        func parseTypedNumber(_ address: UnsafePointer<UInt8>, count: Int) -> (Any, IndexDistance)? {
-            let temp_buffer_size = 64
-            var temp_buffer = [Int8](repeating: 0, count: temp_buffer_size)
-            return temp_buffer.withUnsafeMutableBufferPointer { (buffer: inout UnsafeMutableBufferPointer<Int8>) -> (Any, IndexDistance)? in
-                memcpy(buffer.baseAddress!, address, min(count, temp_buffer_size - 1)) // ensure null termination
-                
-                let startPointer = buffer.baseAddress!
-                let intEndPointer = UnsafeMutablePointer<UnsafeMutablePointer<Int8>?>.allocate(capacity: 1)
-                defer { intEndPointer.deallocate(capacity: 1) }
-                let doubleEndPointer = UnsafeMutablePointer<UnsafeMutablePointer<Int8>?>.allocate(capacity: 1)
-                defer { doubleEndPointer.deallocate(capacity: 1) }
-                let intResult = strtol(startPointer, intEndPointer, 10)
-                let intDistance = startPointer.distance(to: intEndPointer[0]!)
-                let doubleResult = strtod(startPointer, doubleEndPointer)
-                let doubleDistance = startPointer.distance(to: doubleEndPointer[0]!)
-
-                guard intDistance > 0 || doubleDistance > 0 else {
-                    return nil
-                }
-
-                if intDistance == doubleDistance {
-                    return (intResult, intDistance)
-                }
-                guard doubleDistance > 0 else {
-                    return nil
-                }
-
-                if doubleResult == doubleResult.rounded() {
-                    return (Int(doubleResult), doubleDistance)
-                }
-                return (doubleResult, doubleDistance)
-            }
+    func parseNumber(_ input: Index) throws -> (Decimal, Index)? {
+        var index = input
+        
+        while let (ascii, nextIndex) = source.takeASCII(index), DecimalJSONReader.numberCodePoints.contains(ascii) {
+            index = nextIndex
         }
         
-        if source.encoding == String.Encoding.utf8 {
-            
-            return parseTypedNumber(source.buffer.baseAddress!.advanced(by: input), count: source.buffer.count - input).map { return ($0.0, input + $0.1) }
+        let numberCharacters = try source.takeString(input, end: index)
+        
+        guard let decimal = Decimal(string: numberCharacters) else {
+            return nil
         }
-        else {
-            var numberCharacters = [UInt8]()
-            var index = input
-            while let (ascii, nextIndex) = source.takeASCII(index), JSONReader.numberCodePoints.contains(ascii) {
-                numberCharacters.append(ascii)
-                index = nextIndex
-            }
-            
-            numberCharacters.append(0)
-            
-            return numberCharacters.withUnsafeBufferPointer {
-                parseTypedNumber($0.baseAddress!, count: $0.count)
-            }.map { return ($0.0, index) }
-        }
+        
+        return (decimal, index)
     }
 
     //MARK: - Value parsing
